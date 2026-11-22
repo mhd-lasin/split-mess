@@ -12,13 +12,40 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 dotenv.config({ path: path.resolve(__dirname, '..', '..', '..', '.env') });
 
-function isRemotePostgresUrl(connectionString: string): boolean {
+function parsePostgresConnection(connectionString: string): {
+  effectiveConnectionString: string;
+  isRemote: boolean;
+  sslOption?: { rejectUnauthorized: boolean };
+} {
   try {
     const parsed = new URL(connectionString);
-    const host = parsed.hostname.toLowerCase();
-    return host !== 'localhost' && host !== '127.0.0.1' && host !== '::1';
+    const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const isRemote = host !== 'localhost' && host !== '127.0.0.1' && host !== '::1';
+    const sslMode = parsed.searchParams.get('sslmode')?.toLowerCase();
+    const sslDisabled = sslMode === 'disable';
+
+    if (isRemote && !sslDisabled) {
+      const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false';
+      // Strip sslmode from the URL when applying an explicit ssl object so pg-connection-string does not overwrite it
+      if (!rejectUnauthorized && parsed.searchParams.has('sslmode')) {
+        parsed.searchParams.delete('sslmode');
+      }
+      return {
+        effectiveConnectionString: parsed.toString(),
+        isRemote,
+        sslOption: { rejectUnauthorized },
+      };
+    }
+
+    return {
+      effectiveConnectionString: connectionString,
+      isRemote,
+    };
   } catch {
-    return false;
+    return {
+      effectiveConnectionString: connectionString,
+      isRemote: false,
+    };
   }
 }
 
@@ -46,14 +73,11 @@ export async function getDbClient(): Promise<DbClient> {
 
   // Try connecting to standard PostgreSQL server first
   if (connectionString) {
-    const isRemote = isRemotePostgresUrl(connectionString);
-    const sslDisabled = /sslmode=disable/i.test(connectionString);
+    const { effectiveConnectionString, isRemote, sslOption } = parsePostgresConnection(connectionString);
     const pool = new Pool({
-      connectionString,
+      connectionString: effectiveConnectionString,
       connectionTimeoutMillis: isProd || isRemote ? 15000 : 2500,
-      ...(isRemote && !sslDisabled
-        ? { ssl: { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' } }
-        : {}),
+      ...(sslOption ? { ssl: sslOption } : {}),
     });
 
     try {
