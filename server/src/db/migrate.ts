@@ -58,7 +58,7 @@ export async function runMigrations() {
     const month = now.getMonth() + 1;
     const cycleCode = `${year}-${month.toString().padStart(2, '0')}`;
     const startDate = `${cycleCode}-01`;
-    const endDate = new Date(year, month, 0).toISOString().split('T')[0];
+    const endDate = new Date(Date.UTC(year, month, 0)).toISOString().split('T')[0];
 
     await db.query(
       `INSERT INTO billing_cycles (cycle_code, start_date, end_date, status, total_expense_fils)
