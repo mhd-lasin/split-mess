@@ -1,0 +1,23 @@
+{
+  "name": "split-mess",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm run --prefix server build && npm run --prefix client build",
+    "start": "node server/dist/index.js",
+    "db:migrate": "npm run --prefix server db:migrate",
+    "db:seed": "npm run --prefix server db:seed",
+    "db:clean": "npm run --prefix server db:clean",
+    "server:dev": "npm run --prefix server dev",
+    "client:dev": "npm run --prefix client dev"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "playwright": "^1.65.0",
+    "vite-plugin-pwa": "^2.0.0"
+  }
+}
