@@ -8,7 +8,19 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Load server/.env first, then fallback to workspace root .env (without overriding existing env vars)
 dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '..', '..', '..', '.env') });
+
+function isRemotePostgresUrl(connectionString: string): boolean {
+  try {
+    const parsed = new URL(connectionString);
+    const host = parsed.hostname.toLowerCase();
+    return host !== 'localhost' && host !== '127.0.0.1' && host !== '::1';
+  } catch {
+    return false;
+  }
+}
 
 export interface QueryResult<T = any> {
   rows: T[];
@@ -30,12 +42,18 @@ export async function getDbClient(): Promise<DbClient> {
   }
 
   const connectionString = process.env.DATABASE_URL;
+  const isProd = process.env.NODE_ENV === 'production';
 
   // Try connecting to standard PostgreSQL server first
   if (connectionString) {
+    const isRemote = isRemotePostgresUrl(connectionString);
+    const sslDisabled = /sslmode=disable/i.test(connectionString);
     const pool = new Pool({
       connectionString,
-      connectionTimeoutMillis: 2000,
+      connectionTimeoutMillis: isProd || isRemote ? 15000 : 2500,
+      ...(isRemote && !sslDisabled
+        ? { ssl: { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' } }
+        : {}),
     });
 
     try {
@@ -71,14 +89,20 @@ export async function getDbClient(): Promise<DbClient> {
           },
           isPGlite: false,
         };
-        console.log(' Connected to PostgreSQL server on 5432.');
+        console.log(`✅ Connected to PostgreSQL server (${isRemote ? 'remote/cloud' : 'local'}).`);
         return dbInstance;
       }
     } catch (err: any) {
+      await pool.end().catch(() => {});
+      if (isProd && process.env.ALLOW_PGLITE_IN_PROD !== 'true') {
+        console.error('❌ Production PostgreSQL connection failed:', err.message);
+        throw err;
+      }
       console.warn('⚠️ Standard PostgreSQL server connection failed/timed out.');
       console.warn('   Falling back to persistent embedded PostgreSQL (PGlite)...');
-      await pool.end().catch(() => {});
     }
+  } else if (isProd && process.env.ALLOW_PGLITE_IN_PROD !== 'true') {
+    throw new Error('FATAL: DATABASE_URL must be set in production.');
   }
 
   // Fallback to embedded PostgreSQL engine (PGlite)
