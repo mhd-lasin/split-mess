@@ -15,7 +15,22 @@ export const expensesRouter = Router();
 expensesRouter.get('/', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
     const db = await getDbClient();
-    let cycleId = req.query.cycleId as string;
+    let cycleId = req.query.cycleId as string | undefined;
+    const poolId = req.query.poolId as string | undefined;
+    const payerId = req.query.payerId as string | undefined;
+
+    if (cycleId !== undefined && !isValidUuid(cycleId)) {
+      res.status(400).json({ error: 'Invalid cycleId query parameter.' });
+      return;
+    }
+    if (poolId !== undefined && !isValidUuid(poolId)) {
+      res.status(400).json({ error: 'Invalid poolId query parameter.' });
+      return;
+    }
+    if (payerId !== undefined && !isValidUuid(payerId)) {
+      res.status(400).json({ error: 'Invalid payerId query parameter.' });
+      return;
+    }
 
     if (!cycleId) {
       const openCycleRes = await db.query(
@@ -35,14 +50,14 @@ expensesRouter.get('/', authenticateToken, async (req: Request, res: Response): 
       params.push(cycleId);
     }
 
-    if (req.query.poolId) {
+    if (poolId) {
       conditions.push(`e.pool_id = $${paramIndex++}`);
-      params.push(req.query.poolId);
+      params.push(poolId);
     }
 
-    if (req.query.payerId) {
+    if (payerId) {
       conditions.push(`e.paid_by_user_id = $${paramIndex++}`);
-      params.push(req.query.payerId);
+      params.push(payerId);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -163,35 +178,37 @@ expensesRouter.post(
       const receiptMimeType = req.file ? req.file.mimetype : null;
       const dateToRecord = expenseDate || new Date().toISOString().split('T')[0];
 
-      const insertRes = await db.query(
-        `INSERT INTO expenses (
-           billing_cycle_id, pool_id, paid_by_user_id,
-           amount_fils, description, expense_date,
-           receipt_url, receipt_mime_type
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, billing_cycle_id, pool_id, paid_by_user_id, amount_fils, description, expense_date, receipt_url;`,
-        [
-          cycleId,
-          poolId,
-          actualPayerId,
-          amountFils,
-          cleanDesc,
-          dateToRecord,
-          receiptUrl,
-          receiptMimeType,
-        ]
-      );
+      const created = await db.transaction(async (tx) => {
+        const insertRes = await tx.query(
+          `INSERT INTO expenses (
+             billing_cycle_id, pool_id, paid_by_user_id,
+             amount_fils, description, expense_date,
+             receipt_url, receipt_mime_type
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING id, billing_cycle_id, pool_id, paid_by_user_id, amount_fils, description, expense_date, receipt_url;`,
+          [
+            cycleId,
+            poolId,
+            actualPayerId,
+            amountFils,
+            cleanDesc,
+            dateToRecord,
+            receiptUrl,
+            receiptMimeType,
+          ]
+        );
 
-      // Update cycle total expense fils
-      await db.query(
-        `UPDATE billing_cycles 
-         SET total_expense_fils = total_expense_fils + $1 
-         WHERE id = $2;`,
-        [amountFils, cycleId]
-      );
+        await tx.query(
+          `UPDATE billing_cycles 
+           SET total_expense_fils = total_expense_fils + $1 
+           WHERE id = $2;`,
+          [amountFils, cycleId]
+        );
 
-      const created = insertRes.rows[0];
+        return insertRes.rows[0];
+      });
+
       res.status(201).json({
         message: 'Expense recorded successfully.',
         expense: {
@@ -264,6 +281,11 @@ expensesRouter.put(
 
       const { payerId, paidByUserId, poolId, amountAed, description, expenseDate } = req.body;
       const requestedPayerId = payerId || paidByUserId;
+      if (requestedPayerId && isAdmin && !isValidUuid(requestedPayerId)) {
+        if (req.file) await deleteReceiptFile(req.file.filename);
+        res.status(400).json({ error: 'Invalid payerId.' });
+        return;
+      }
       // Only admins can reassign an expense to a different payer
       const newPayerId =
         requestedPayerId && isAdmin ? requestedPayerId : existing.paid_by_user_id;
@@ -282,54 +304,53 @@ expensesRouter.put(
         newAmountFils = aedToFils(numAed);
       }
 
-      // If a new receipt was uploaded, delete old receipt
-      let newReceiptUrl = existing.receipt_url;
-      let newReceiptMime = null;
-      if (req.file) {
-        if (existing.receipt_url) {
-          await deleteReceiptFile(existing.receipt_url);
-        }
-        newReceiptUrl = `/uploads/receipts/${req.file.filename}`;
-        newReceiptMime = req.file.mimetype;
-      }
+      const newReceiptUrl = req.file ? `/uploads/receipts/${req.file.filename}` : null;
+      const newReceiptMime = req.file ? req.file.mimetype : null;
 
-      // Update database
-      const updateRes = await db.query(
-        `UPDATE expenses 
-         SET pool_id = $1,
-             paid_by_user_id = $2,
-             amount_fils = $3,
-             description = $4,
-             expense_date = $5,
-             receipt_url = COALESCE($6, receipt_url),
-             receipt_mime_type = COALESCE($7, receipt_mime_type),
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = $8
-         RETURNING id, billing_cycle_id, pool_id, paid_by_user_id, amount_fils, description, expense_date, receipt_url;`,
-        [
-          newPoolId,
-          newPayerId,
-          newAmountFils,
-          newDesc,
-          newDate,
-          req.file ? newReceiptUrl : null,
-          newReceiptMime,
-          expenseId,
-        ]
-      );
-
-      // Adjust billing cycle total if amount changed
-      const filsDelta = newAmountFils - existing.amount_fils;
-      if (filsDelta !== 0) {
-        await db.query(
-          `UPDATE billing_cycles 
-           SET total_expense_fils = GREATEST(0, total_expense_fils + $1) 
-           WHERE id = $2;`,
-          [filsDelta, existing.billing_cycle_id]
+      // Atomically update expense and cycle total
+      const updated = await db.transaction(async (tx) => {
+        const updateRes = await tx.query(
+          `UPDATE expenses 
+           SET pool_id = $1,
+               paid_by_user_id = $2,
+               amount_fils = $3,
+               description = $4,
+               expense_date = $5,
+               receipt_url = COALESCE($6, receipt_url),
+               receipt_mime_type = COALESCE($7, receipt_mime_type),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $8
+           RETURNING id, billing_cycle_id, pool_id, paid_by_user_id, amount_fils, description, expense_date, receipt_url;`,
+          [
+            newPoolId,
+            newPayerId,
+            newAmountFils,
+            newDesc,
+            newDate,
+            newReceiptUrl,
+            newReceiptMime,
+            expenseId,
+          ]
         );
+
+        const filsDelta = newAmountFils - existing.amount_fils;
+        if (filsDelta !== 0) {
+          await tx.query(
+            `UPDATE billing_cycles 
+             SET total_expense_fils = GREATEST(0, total_expense_fils + $1) 
+             WHERE id = $2;`,
+            [filsDelta, existing.billing_cycle_id]
+          );
+        }
+
+        return updateRes.rows[0];
+      });
+
+      // Delete old receipt only after DB transaction succeeds
+      if (req.file && existing.receipt_url) {
+        await deleteReceiptFile(existing.receipt_url);
       }
 
-      const updated = updateRes.rows[0];
       res.status(200).json({
         message: 'Expense updated successfully.',
         expense: {
@@ -389,21 +410,21 @@ expensesRouter.delete('/:id', authenticateToken, async (req: Request, res: Respo
       return;
     }
 
-    // Unlink physical receipt file from disk if present
+    // Atomically delete expense and decrement cycle total
+    await db.transaction(async (tx) => {
+      await tx.query(`DELETE FROM expenses WHERE id = $1;`, [expenseId]);
+      await tx.query(
+        `UPDATE billing_cycles 
+         SET total_expense_fils = GREATEST(0, total_expense_fils - $1) 
+         WHERE id = $2;`,
+        [expense.amount_fils, expense.billing_cycle_id]
+      );
+    });
+
+    // Unlink physical receipt file from disk only after DB delete succeeds
     if (expense.receipt_url) {
       await deleteReceiptFile(expense.receipt_url);
     }
-
-    // Delete expense from database
-    await db.query(`DELETE FROM expenses WHERE id = $1;`, [expenseId]);
-
-    // Update cycle total
-    await db.query(
-      `UPDATE billing_cycles 
-       SET total_expense_fils = GREATEST(0, total_expense_fils - $1) 
-       WHERE id = $2;`,
-      [expense.amount_fils, expense.billing_cycle_id]
-    );
 
     res.status(200).json({ message: 'Expense and associated receipt file deleted successfully.' });
   } catch (err: any) {

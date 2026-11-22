@@ -115,7 +115,7 @@ authRouter.post('/register', async (req: Request, res: Response): Promise<void> 
 
     const assignedRole = isFirstUser ? 'admin' : 'member';
 
-    const pinHash = bcrypt.hashSync(pin, 10);
+    const pinHash = await bcrypt.hash(pin, 10);
 
     const insertUserRes = await db.query(
       `INSERT INTO users (name, phone, pin_hash, role, is_active)
@@ -163,7 +163,7 @@ authRouter.post('/register', async (req: Request, res: Response): Promise<void> 
       res.status(409).json({ error: 'A roommate with that phone number already exists.' });
       return;
     }
-    res.status(500).json({ error: err.message || 'Failed to register user.' });
+    res.status(500).json({ error: 'Failed to register user.' });
   }
 });
 
@@ -187,39 +187,50 @@ authRouter.post('/members', authenticateToken, requireAdmin, async (req: Request
     return;
   }
 
+  if (poolIds !== undefined) {
+    if (!Array.isArray(poolIds) || !poolIds.every((id) => isValidUuid(id))) {
+      res.status(400).json({ error: 'poolIds must be an array of valid UUIDs.' });
+      return;
+    }
+  }
+
   const allowedRoles = ['member', 'admin', 'external'];
   const assignedRole = allowedRoles.includes(role) ? role : 'member';
 
   try {
     const db = await getDbClient();
-    const pinHash = bcrypt.hashSync(pin, 10);
+    const pinHash = await bcrypt.hash(pin, 10);
 
-    const insertUserRes = await db.query(
-      `INSERT INTO users (name, phone, pin_hash, role, is_active)
-       VALUES ($1, $2, $3, $4, true)
-       RETURNING id, name, phone, role, avatar_url, is_active;`,
-      [cleanName, cleanPhone, pinHash, assignedRole]
-    );
-
-    const newUser = insertUserRes.rows[0];
-
-    // Enroll in selected pools (or all active pools if poolIds not provided)
-    let targetPoolIds: string[] = [];
-    if (Array.isArray(poolIds)) {
-      targetPoolIds = poolIds;
-    } else {
-      const poolsRes = await db.query(`SELECT id FROM expense_pools WHERE is_active = true;`);
-      targetPoolIds = poolsRes.rows.map((p) => p.id);
-    }
-
-    for (const poolId of targetPoolIds) {
-      await db.query(
-        `INSERT INTO pool_members (pool_id, user_id, is_active)
-         VALUES ($1, $2, true)
-         ON CONFLICT (pool_id, user_id) DO UPDATE SET is_active = true;`,
-        [poolId, newUser.id]
+    const newUser = await db.transaction(async (tx) => {
+      const insertUserRes = await tx.query(
+        `INSERT INTO users (name, phone, pin_hash, role, is_active)
+         VALUES ($1, $2, $3, $4, true)
+         RETURNING id, name, phone, role, avatar_url, is_active;`,
+        [cleanName, cleanPhone, pinHash, assignedRole]
       );
-    }
+
+      const createdUser = insertUserRes.rows[0];
+
+      // Enroll in selected pools (or all active pools if poolIds not provided)
+      let targetPoolIds: string[] = [];
+      if (Array.isArray(poolIds)) {
+        targetPoolIds = poolIds;
+      } else {
+        const poolsRes = await tx.query(`SELECT id FROM expense_pools WHERE is_active = true;`);
+        targetPoolIds = poolsRes.rows.map((p) => p.id);
+      }
+
+      for (const poolId of targetPoolIds) {
+        await tx.query(
+          `INSERT INTO pool_members (pool_id, user_id, is_active)
+           VALUES ($1, $2, true)
+           ON CONFLICT (pool_id, user_id) DO UPDATE SET is_active = true;`,
+          [poolId, createdUser.id]
+        );
+      }
+
+      return createdUser;
+    });
 
     res.status(201).json({
       message: `Roommate ${newUser.name} added successfully.`,
@@ -231,7 +242,7 @@ authRouter.post('/members', authenticateToken, requireAdmin, async (req: Request
       res.status(409).json({ error: 'A roommate with that phone number already exists.' });
       return;
     }
-    res.status(500).json({ error: err.message || 'Failed to add roommate.' });
+    res.status(500).json({ error: 'Failed to add roommate.' });
   }
 });
 
@@ -259,12 +270,12 @@ authRouter.put('/pin', authenticateToken, async (req: Request, res: Response): P
       return;
     }
 
-    if (!bcrypt.compareSync(String(currentPin), userRes.rows[0].pin_hash)) {
+    if (!(await bcrypt.compare(String(currentPin), userRes.rows[0].pin_hash))) {
       res.status(401).json({ error: 'Current PIN is incorrect.' });
       return;
     }
 
-    const newHash = bcrypt.hashSync(String(newPin), 10);
+    const newHash = await bcrypt.hash(String(newPin), 10);
     await db.query(
       `UPDATE users SET pin_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2;`,
       [newHash, req.user!.id]
@@ -297,7 +308,7 @@ authRouter.put('/members/:id/pin', authenticateToken, requireAdmin, async (req: 
 
   try {
     const db = await getDbClient();
-    const newHash = bcrypt.hashSync(String(newPin), 10);
+    const newHash = await bcrypt.hash(String(newPin), 10);
     const updateRes = await db.query(
       `UPDATE users SET pin_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, name;`,
       [newHash, targetId]
@@ -368,6 +379,11 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
     return;
   }
 
+  if (!isValidUuid(userId)) {
+    res.status(400).json({ error: 'Invalid user ID.' });
+    return;
+  }
+
   if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
     res.status(400).json({ error: 'PIN must be exactly 4 numeric digits.' });
     return;
@@ -391,7 +407,7 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    const isPinValid = bcrypt.compareSync(pin, user.pin_hash);
+    const isPinValid = await bcrypt.compare(pin, user.pin_hash);
     if (!isPinValid) {
       res.status(401).json({ error: 'Invalid PIN.' });
       return;
@@ -540,14 +556,16 @@ authRouter.post('/avatar', authenticateToken, uploadAvatar.single('avatar'), ver
     const db = await getDbClient();
     const avatarUrl = `/uploads/avatars/${req.file.filename}`;
 
-    // Get old avatar to delete from disk if exists
+    // Read previous avatar URL before updating DB; delete old file only after DB update succeeds
     const prevRes = await db.query(`SELECT avatar_url FROM users WHERE id = $1;`, [req.user!.id]);
-    deleteAvatarFromDisk(prevRes.rows[0]?.avatar_url);
+    const prevAvatarUrl = prevRes.rows[0]?.avatar_url;
 
     const updateRes = await db.query(
       `UPDATE users SET avatar_url = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, name, phone, role, avatar_url;`,
       [avatarUrl, req.user!.id]
     );
+
+    deleteAvatarFromDisk(prevAvatarUrl);
 
     res.status(200).json({
       message: 'Profile picture updated successfully.',
@@ -555,6 +573,14 @@ authRouter.post('/avatar', authenticateToken, uploadAvatar.single('avatar'), ver
       user: updateRes.rows[0],
     });
   } catch (err: any) {
+    // Clean up newly uploaded file if DB update failed
+    if (req.file?.path) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch {
+        // ignore cleanup error
+      }
+    }
     console.error('Avatar upload error:', err);
     res.status(500).json({ error: 'Failed to update profile picture.' });
   }

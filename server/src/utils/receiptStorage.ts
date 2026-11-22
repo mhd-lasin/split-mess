@@ -57,8 +57,9 @@ export function resolveSafeReceiptPath(filenameOrUrl: string): string {
   const sanitizedFilename = path.basename(filenameOrUrl);
   const resolvedPath = path.resolve(UPLOAD_DIR, sanitizedFilename);
 
-  // Security check: must reside inside UPLOAD_DIR
-  if (!resolvedPath.startsWith(UPLOAD_DIR)) {
+  // Security check: must reside strictly inside UPLOAD_DIR
+  const safePrefix = UPLOAD_DIR.endsWith(path.sep) ? UPLOAD_DIR : `${UPLOAD_DIR}${path.sep}`;
+  if (!resolvedPath.startsWith(safePrefix)) {
     throw new Error('Access denied: Path traversal attempt detected');
   }
 
