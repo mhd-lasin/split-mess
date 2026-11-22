@@ -178,85 +178,134 @@ export const PinLogin: React.FC = () => {
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowRegisterModal(true)}
-          className="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-semibold text-[#0F172A] bg-white border border-[#E6E8EC] rounded-lg shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-[#F8FAFC] hover:border-slate-300 transition-colors active:scale-95"
-        >
-          <span className="material-symbols-outlined text-[15px] text-[#64748B]">person_add</span>
-          <span>Enroll Room</span>
-        </button>
+        {members.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowRegisterModal(true)}
+            className="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-semibold text-[#0F172A] bg-white border border-[#E6E8EC] rounded-lg shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-[#F8FAFC] hover:border-slate-300 transition-colors active:scale-95"
+          >
+            <span className="material-symbols-outlined text-[15px] text-[#64748B]">person_add</span>
+            <span>Enroll Room</span>
+          </button>
+        )}
       </div>
 
       {/* Main Content */}
       <div className="flex-1 px-6 flex flex-col items-center justify-between pb-6">
-        <div className="w-full flex flex-col items-center pt-4">
+        <div
+          className={`w-full flex flex-col items-center ${
+            members.length === 0 ? 'flex-1 justify-center py-4' : 'pt-4'
+          }`}
+        >
           {/* Zero State: No members yet */}
           {members.length === 0 ? (
-            <div className="w-full bg-white rounded-2xl border border-[#E6E8EC] p-5 shadow-[0_2px_10px_-2px_rgba(15,23,42,0.05)] mb-4">
-              <div className="flex items-center gap-2.5 mb-2.5">
-                <div className="w-10 h-10 rounded-xl bg-[#EEF0FB] text-[#3346D3] flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[20px]">admin_panel_settings</span>
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-[#0F172A]">Setup First Profile</h3>
-                  <p className="text-[11px] text-[#64748B]">Create the Room Admin account</p>
-                </div>
+            <div className="w-full space-y-5">
+              {/* Welcome Header */}
+              <div className="px-1">
+                <h1 className="text-[22px] font-extrabold text-[#0F172A] tracking-[-0.03em] leading-tight">
+                  Welcome to Split Mess
+                </h1>
+                <p className="mt-1.5 text-[13px] text-[#64748B] leading-relaxed">
+                  Set up your Room Admin account first. You can add flatmates and assign shared pools right after.
+                </p>
               </div>
 
-              <form onSubmit={handleRegisterSubmit} className="space-y-3 mt-4">
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#64748B] mb-1">
-                    Full name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Full name"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    className="w-full h-11 px-3.5 bg-[#F6F7F9] border border-[#E6E8EC] rounded-xl text-sm font-medium text-[#0F172A] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3346D3]/20 focus:border-[#3346D3]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#64748B] mb-1">
-                    4-digit PIN
-                  </label>
-                  <input
-                    type="password"
-                    maxLength={4}
-                    required
-                    placeholder="••••"
-                    value={newPin}
-                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
-                    className="w-full h-11 px-3.5 bg-[#F6F7F9] border border-[#E6E8EC] rounded-xl font-mono text-sm tracking-widest text-[#0F172A] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3346D3]/20 focus:border-[#3346D3]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#64748B] mb-1">
-                    Phone (optional)
-                  </label>
-                  <input
-                    type="tel"
-                    placeholder="+971 50 000 0000"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    className="w-full h-11 px-3.5 bg-[#F6F7F9] border border-[#E6E8EC] rounded-xl text-sm text-[#0F172A] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3346D3]/20 focus:border-[#3346D3]"
-                  />
-                </div>
-                {registerError && (
-                  <div className="text-[#D92D20] text-xs bg-[#FEECEB] px-3 py-2 rounded-xl font-medium">
-                    {registerError}
+              {/* Setup Form Card */}
+              <div className="w-full bg-white rounded-2xl border border-[#E6E8EC] p-5 shadow-[0_2px_10px_-2px_rgba(15,23,42,0.05)]">
+                <div className="flex items-center gap-2.5 mb-1">
+                  <div className="w-10 h-10 rounded-xl bg-[#EEF0FB] text-[#3346D3] flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-[20px]">admin_panel_settings</span>
                   </div>
-                )}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full h-11 bg-[#3346D3] hover:bg-[#2736B0] text-white rounded-xl text-sm font-semibold shadow-sm transition-colors active:scale-[0.98]"
-                >
-                  {loading ? 'Creating...' : 'Create Admin Profile'}
-                </button>
-              </form>
+                  <div>
+                    <h2 className="text-sm font-bold text-[#0F172A]">Setup First Profile</h2>
+                    <p className="text-[11px] text-[#64748B]">Create the Room Admin account</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleRegisterSubmit} className="space-y-3.5 mt-4">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] mb-1">
+                      Full name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Full name"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      className="w-full h-11 px-3.5 bg-[#F6F7F9] border border-[#E6E8EC] rounded-xl text-sm font-medium text-[#0F172A] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3346D3]/20 focus:border-[#3346D3]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] mb-1">
+                      4-digit PIN
+                    </label>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      required
+                      placeholder="••••"
+                      value={newPin}
+                      onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                      className="w-full h-11 px-3.5 bg-[#F6F7F9] border border-[#E6E8EC] rounded-xl font-mono text-sm tracking-widest text-[#0F172A] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3346D3]/20 focus:border-[#3346D3]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] mb-1">
+                      Phone (optional)
+                    </label>
+                    <input
+                      type="tel"
+                      placeholder="+971 50 000 0000"
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      className="w-full h-11 px-3.5 bg-[#F6F7F9] border border-[#E6E8EC] rounded-xl text-sm text-[#0F172A] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3346D3]/20 focus:border-[#3346D3]"
+                    />
+                  </div>
+                  {registerError && (
+                    <div className="text-[#D92D20] text-xs bg-[#FEECEB] px-3 py-2 rounded-xl font-medium">
+                      {registerError}
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full h-11 bg-[#3346D3] hover:bg-[#2736B0] text-white rounded-xl text-sm font-semibold shadow-sm transition-colors active:scale-[0.98]"
+                  >
+                    {loading ? 'Creating...' : 'Create Admin Profile'}
+                  </button>
+                </form>
+              </div>
+
+              {/* Compact Room Setup Highlights */}
+              <div className="w-full bg-white/80 rounded-2xl border border-[#E6E8EC] p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-[#EEF0FB] text-[#3346D3] flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-[17px]">workspaces</span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-[#0F172A]">4 Shared Pools Ready</p>
+                    <p className="text-[11px] text-[#64748B] leading-snug">
+                      Mess, Cooking Gas, Drinking Water &amp; Maintenance pre-configured.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="h-px bg-[#EEF0F4]" />
+
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-[#E8F5EF] text-[#12805C] flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-[17px]">calculate</span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-[#0F172A]">Exact AED / Fils Settlement</p>
+                    <p className="text-[11px] text-[#64748B] leading-snug">
+                      Instant out-of-pocket offsets and automatic monthly cycle rollovers.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             <>
