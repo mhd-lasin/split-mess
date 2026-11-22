@@ -114,10 +114,25 @@ cyclesRouter.post('/close', authenticateToken, requireAdmin, async (req: Request
     }
     const nextCycleCode = `${year}-${month.toString().padStart(2, '0')}`;
     const nextStartDate = `${nextCycleCode}-01`;
-    const nextEndDate = new Date(year, month, 0).toISOString().split('T')[0];
+    const nextEndDate = new Date(Date.UTC(year, month, 0)).toISOString().split('T')[0];
 
     // 4. Execute all state mutations atomically in a transaction
     await db.transaction(async (tx) => {
+      // Atomically claim and close the open cycle first to prevent concurrent double-close races
+      const closeRes = await tx.query(
+        `UPDATE billing_cycles 
+         SET status = 'closed', total_expense_fils = $1, closed_at = CURRENT_TIMESTAMP, closed_by_user_id = $2 
+         WHERE id = $3 AND status = 'open'
+         RETURNING id;`,
+        [matrix.totalExpensesFils, req.user!.id, currentCycleId]
+      );
+
+      if (closeRes.rowCount === 0) {
+        const conflictErr: any = new Error('This billing cycle has already been closed.');
+        conflictErr.status = 409;
+        throw conflictErr;
+      }
+
       // Persist working member_balances and immutable settlement_snapshots
       for (const summary of matrix.memberSummaries) {
         await tx.query(
@@ -168,14 +183,6 @@ cyclesRouter.post('/close', authenticateToken, requireAdmin, async (req: Request
         );
       }
 
-      // Close current cycle and sync total_expense_fils
-      await tx.query(
-        `UPDATE billing_cycles 
-         SET status = 'closed', total_expense_fils = $1, closed_at = CURRENT_TIMESTAMP, closed_by_user_id = $2 
-         WHERE id = $3;`,
-        [matrix.totalExpensesFils, req.user!.id, currentCycleId]
-      );
-
       // Open next cycle
       const nextCycleRes = await tx.query(
         `INSERT INTO billing_cycles (cycle_code, start_date, end_date, status, total_expense_fils)
@@ -218,6 +225,10 @@ cyclesRouter.post('/close', authenticateToken, requireAdmin, async (req: Request
       totalExpensesAed: filsToAed(matrix.totalExpensesFils),
     });
   } catch (err: any) {
+    if (err.status === 409) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
     console.error('Error closing cycle:', err);
     res.status(500).json({ error: 'Failed to close billing cycle.' });
   }
