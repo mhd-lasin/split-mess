@@ -44,8 +44,9 @@ npm install
 ```
 
 ### 2. Configure Environment
-Copy `.env.example` to `.env` and update values as needed:
+Copy `.env.example` into `server/.env` (used by `npm run server:dev` and `npm run db:migrate`, which run inside `server/`) and root `.env` (used by `npm start`):
 ```bash
+cp .env.example server/.env
 cp .env.example .env
 ```
 
@@ -54,17 +55,33 @@ cp .env.example .env
 docker compose up -d
 ```
 
-### 3. Run in Development
+### 3. Run Database Migrations
+Initialize the schema, default expense pools (`MESS`, `GAS`, `WATER`, `MAINTENANCE`), and initial open billing cycle before starting the app for the first time:
+```bash
+npm run db:migrate
+```
+
+### 4. Run in Development
 Start the API server (`http://localhost:4000`) and Vite client (`http://localhost:5173`) in separate terminals:
 ```bash
 npm run server:dev
 npm run client:dev
 ```
 
-### 4. Production Build
+### 5. Production Build & Deployment
+> **Security Requirement:** Never deploy with the default values from `.env.example`. Before starting in production, configure environment variables (in `.env` or your host's secret manager):
+> - `NODE_ENV=production` (enforces `Secure` cookies, HSTS, and strict `JWT_SECRET` validation)
+> - `JWT_SECRET=<unique 32+ byte random secret>` (e.g., generate with `openssl rand -hex 32`)
+> - `DATABASE_URL=<production PostgreSQL connection string>`
+> - `CORS_ORIGIN=<your production frontend origin(s)>`
+> - `ALLOW_SELF_REGISTRATION=false`
+> - `TRUST_PROXY_HOPS=1` (if deployed behind Nginx, Render, Railway, or Cloudflare)
+
+Then run migrations, build, and start:
 ```bash
+npm run db:migrate
 npm run build
-npm start
+NODE_ENV=production npm start
 ```
 
 ---
